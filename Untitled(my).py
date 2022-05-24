@@ -1,12 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[6]:
-
-
 import PySimpleGUI as gui
 import FinanceDataReader as fdr
-#import selenium as se
+import selenium as se
 import pandas as pd
 import mplfinance as mpf
 import matplotlib as mpl
@@ -15,7 +12,7 @@ import xlsxwriter
 import concurrent.futures as cf
 
 #from matplotlib import use
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg, NavigationToolbar2Tk)
 from copy import deepcopy
 from mpl_toolkits.mplot3d import Axes3D
 from datetime import datetime
@@ -41,67 +38,52 @@ class Trader:
         self.high = high
         self.low = low
         self.start = start
-        self.total = self.profit + self.now * self.stock
-    def trade(self, amount, mod, price = None) :
+        self.total = self.money + self.now * self.stock
+    def trade(self, amount, mod, price) :
         if amount == 0 :
             return -1
         if mod == 1: #buy
-            if (self.profit < self.now*amount) :
-                left = self.profit - self.now*amount
-                self.profit = 0
-                self.money -= left
-            else :
-                self.profit -= self.now * amount
-            self.invested += self.now * amount
+            if (self.money < price * amount) :
+                print("fff")
+                amount = price // self.now
+                trade(self, amount, mod, price)
+                return 0
+            self.money -= price * amount
+            self.invested += price * amount
             self.stock += amount
             self.last = self.invested / self.stock
-            self.price = self.now
-            self.total = self.profit + self.now * self.stock
-        if mod == 2: #sell normal
+            self.price = price
+            self.total = self.money + self.now * self.stock
+        if mod == 2: #sell
             if (self.stock - amount < 0) : 
                 return -1
-            if (self.stock == 1) :
-                self.profit += price
-                self.price = price
-                self.invested = 0
-                self.stock = 0
+            
+            self.money += price * amount
+            self.invested -= self.last * amount
+            self.stock -= amount
+            self.price = price
+            if (self.stock == 0) :
                 self.last = 0
-                self.total = self.profit + self.now * self.stock
-            elif (self.stock != 1):
-                self.profit += price * amount
-                self.invested -= self.last * amount
-                self.stock -= amount
-                if (self.stock == 0) :
-                    self.last = 0
-                self.price = price
-                self.total = self.profit + self.now * self.stock
+            self.total = self.money + self.now * self.stock
         if mod == 3: #sellall
             if (self.stock == 0) :
                 return -1
-            self.profit += price * self.stock
+            self.money += price * self.stock
             self.invested = 0
             self.stock = 0
             self.last = 0
             self.price = price
-            self.total = self.profit + self.now * self.stock
-        if mod == 4: #runsell
-            if self.stock - amount < 0 :
+            self.total = self.money + self.now * self.stock
+        if mod == 4: #buyall
+            if (self.money < self.now) :
                 return -1
-            if (self.stock == 1) :
-                self.profit += self.now
-                self.invested = 0
-                self.stock = 0
-                self.last = 0
-                self.price = self.now
-                self.total = self.profit + self.now * self.stock
-            elif (self.stock != 1):
-                self.profit += self.now * amount
-                self.invested -= self.last * amount
-                self.stock -= amount
-                if (self.stock == 0) :
-                    self.last = 0
-                self.price = self.now
-                self.total = self.profit + self.now * self.stock
+            amount = self.money // self.now
+            self.money -= self.now * amount
+            self.invested += self.now * amount
+            self.stock += amount
+            self.last = self.invested / self.stock
+            self.price = price
+            self.total = self.money + self.now * self.stock
     def getStatus(self) :
         return [self.now, self.price, self.money, self.profit, self.last, self.invested, self.stock, self.total]
 class SimulatedResults :
@@ -187,11 +169,14 @@ def draw(target, addplot = None, mod = 1) :
         figure_agg2 = draw_figure(window2["resCanvas"].TKCanvas, fig)
         return figure_agg2
 
-def simulate1(info) :
+def simulate1(info, money) :
     ledge = []
     first = 0
-    chk2 = 0
+    chk2 = 4
+    chker = 0
     tr = Trader()
+    tr.money = money
+    
     for x in info:
         if first == 0 :
             start = info[x].loc["Open"]
@@ -200,8 +185,8 @@ def simulate1(info) :
             now = info[x].loc["Close"]
             if (now == 0) : continue #trade stopped days
             tr.update(start, high, low, now)
-            amount = 10
-            tr.trade(amount, 1)
+            amount = money // now // 16
+            tr.trade(amount, 1, now)
             first = 1
             #display(tr.getStatus(), 0)
             ledge.append([0, x, deepcopy(tr)])
@@ -211,53 +196,62 @@ def simulate1(info) :
         low = info[x].loc["Low"]
         now = info[x].loc["Close"]
         tr.update(start, high, low, now)
-        chker = 0
-        '''if (tr.prev * 90 / 100 >= tr.now and chk2 <= 0) : #highly decreased, preventing
-            chk2 = 1
-            amount = tr.stock - tr.stock // 2
-            tr.trade(amount, 4)
+        if (tr.last * 150 / 100 <= tr.high and tr.prev * 105 / 100 < tr.now) : #50% up, sellall
+            tr.trade(1, 3, np.max([tr.last * 150 / 100, tr.low])) #sellall
+            #display(tr.getStatus(), "s1")
+            ledge.append([1, x, deepcopy(tr)])
+            continue
+        if (tr.last * 120 / 100 <= tr.high and tr.prev * 103 / 100 < tr.now and chker <= 0) : #30% up
+            chker = 1
+            amount = tr.stock - tr.stock // 2 #half sell again
+            tr.trade(amount, 2, np.max([tr.last * 120 / 100, tr.low]))
+            #display(tr.getStatus(), "s2")
+            ledge.append([2, x, deepcopy(tr)])
+            continue
+        if (tr.last * 105 / 100 <= tr.high and chker <= 0) : #10%up
+            chker = 5
+            amount = tr.stock - tr.stock * 7 // 8
+            tr.trade(amount, 2, np.max([tr.last * 105 / 100, tr.low]))
+            #display(tr.getStatus(), "s3")
+            ledge.append([3, x, deepcopy(tr)])
+            continue
+            #if (tr.invested == 0) : #first trade, non buyed before
+                #amount = tr.money // tr.now // 10
+                #tr.trade(amount, 1)
+                #display(tr.getStatus(), 10)
+                #new.append(tr.now * 0.9)
+                #continue
+        '''if (tr.prev * 85 / 100 >= tr.high and chker <= 0) : #highly decreased, preventing
+            chker = 2
+            amount = tr.stock // 2
+            tr.trade(amount, 2, tr.now)
             display(tr.getStatus(), "s#1, highly decrease in 1 day, sell off")
             ledge.append([4, x, deepcopy(tr)])
-            continue '''
-        if (tr.last * 80 / 100 >= tr.now and chk2 <= 0) : #10% down ,runsell
-            chk2 = 1
+            continue'''
+        if (tr.last * 90 / 100 >= tr.now and chker <= 0 and chk2 >= 0) : #10% down
+                #chker = 1
+            chk2 -= 1
             amount = tr.stock - tr.stock // 2
-            tr.trade(amount, 4)
+            tr.trade(amount, 2, np.min([tr.last * 90 / 100, tr.start]))
             #display(tr.getStatus(), "s5")
             ledge.append([5, x, deepcopy(tr)])
             continue
-        '''if (tr.last * 95 / 100 >= tr.now) : #5%down
-            amount = 20
-            chk2 -= 1
-            tr.trade(amount, 1)
-            display(tr.getStatus(), "b7")
+        if (tr.last * 95 / 100 >= tr.now) : #5%down
+            chker -= 1
+            chk2 = 4
+            amount = tr.money // tr.now // 8
+            tr.trade(amount, 1, np.min([tr.last * 95 / 100, tr.start]))
+            #display(tr.getStatus(), "b7")
             ledge.append([6, x, deepcopy(tr)])
-            continue'''
-        if (tr.last > tr.now or tr.last == 0) :
-            amount = 10
-            chk2 -= 1
-            tr.trade(amount, 1)
+            continue
+        if (tr.prev * 99 / 100 > tr.now or tr.last == 0) : #just decreased little, just decreased buy deprecated
+            chker -= 1
+            chk2 = 4
+            amount = tr.money // tr.now // 16
+            tr.trade(amount, 1, tr.now)
             #display(tr.getStatus(), "b8")
             ledge.append([7, x, deepcopy(tr)])
             continue
-        if (tr.last < tr.now) :
-            if (tr.last * 105 / 100 <= tr.high and chker <= 0) : #10%up
-                chker = 3
-                amount = tr.stock - tr.stock // 2
-                #display(tr.getStatus(), "s3")
-                tr.trade(amount, 2, tr.last * 1.05)
-            if (tr.last * 110 / 100 <= tr.high) : #30% up
-                chker = 2
-                amount = tr.stock - tr.stock * 2 // 5
-                #display(tr.getStatus(), "s2")
-                tr.trade(amount, 2, tr.last * 1.1)
-            if (tr.last * 115 / 100 <= tr.high) : #50% up, sellall
-                chker = 1
-                #display(tr.getStatus(), "s1")
-                tr.trade(1, 3, tr.last * 1.2)
-            if (chker != 0) :
-                ledge.append([chker, x, deepcopy(tr)])
-                continue
         ledge.append([8, x, deepcopy(tr)])
     #tr.trade(1, 3) #u can change this if u change money check to total check
     #ledge.append(["finalized", tr])
@@ -307,7 +301,7 @@ while True:
         if (figure_agg) :
             figure_agg.get_tk_widget().forget()
         info = kp.transpose()
-        ledge, result = simulate1(info)
+        ledge, result = simulate1(info, 10000000)
         rank.append(SimulatedResults(kp, values["-stock-"], values['start_day'], 
                                      values['end_day'], ledge, result))
 
@@ -346,7 +340,7 @@ while True:
                   mpf.make_addplot(profit, title="profit", markersize = 5, color = 'y')]
         figure_agg = draw(kp, addplot, 1)
         value2 = []
-        value2.append([values["-stock-"], result.money, result.total, result.stock, result.total - result.money])
+        value2.append([values["-stock-"], result.money, result.total, result.stock, result.total - 10000000])
         window2 = gui.Window("stock", get_win2_layout(), finalize = True)
        
         window2["res_table"].update(values = value2)
@@ -354,6 +348,8 @@ while True:
         status = "calc_all"
         window["calc"].update(disabled=True)
         window["show_result"].update(disabled = False)
+        if (figure_agg) :
+            figure_agg.get_tk_widget().forget()
         if (figure_agg2) :
             figure_agg2.get_tk_widget().forget()
         market = values['market_list']
@@ -372,7 +368,7 @@ while True:
             val = val + 100 / (k - 1)
             
             window['progbar'].update_bar(val)
-            window['progtext'].update("(" + str(val) + "/ 100 ) prog")
+            window['progtext'].update("(" + str(round(val, 2)) + "/ 100 ) prog")
             #display(t)
             try :
                 cur = fdr.DataReader(t, values['start_day'], values['end_day'])
@@ -381,7 +377,7 @@ while True:
                 continue
             #display([t, "is under calculation"])
             executor = cf.ThreadPoolExecutor()
-            future = executor.submit(simulate1, cur.transpose())
+            future = executor.submit(simulate1, cur.transpose(), 10000000)
             ledge, result = future.result()
             #ledge, result = simulate1(cur.transpose())
             results.append(SimulatedResults(cur, t, values['start_day'], values['end_day'], ledge, result))
@@ -477,5 +473,6 @@ while True:
         filename = rank[0].name + "(" + str(rank[0].start) + '~' + str(rank[0].end) + ")" + 'res.xlsx'
         data.to_excel(filename, 'sheet1', index=False, engine = 'xlsxwriter')
 window.close()
+
 
 
